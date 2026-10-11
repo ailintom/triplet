@@ -15,6 +15,7 @@ import (
 
 	gv "github.com/davidbyttow/govips/v2/vips"
 	"github.com/libops/triplet/internal/iiif/image/v3/parse"
+	"github.com/libops/triplet/internal/metrics"
 )
 
 // libvips decodes striped TIFFs from the top, so for crops Triplet hands it a
@@ -91,9 +92,11 @@ func stripLayoutForCrop(source *sourceFile, req parse.Request) *stripLayout {
 func loadStrips(path string, l *stripLayout, top, rows int, params *gv.ImportParams) (img *gv.ImageRef, imgTop int, release func(), err error) {
 	if rows < l.height {
 		if img, windowTop, release, err := loadStripWindow(path, l, top, rows, params); err == nil {
+			metrics.StripWindowLoad(true)
 			return img, top - windowTop, release, nil
 		}
 	}
+	metrics.StripWindowLoad(false)
 	img, err = gv.LoadImageFromFileDirect(path, params)
 	return img, top, func() {}, err
 }

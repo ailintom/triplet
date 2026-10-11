@@ -5,11 +5,16 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	gv "github.com/davidbyttow/govips/v2/vips"
+	"github.com/libops/triplet/internal/metrics"
 	"github.com/libops/triplet/internal/storage"
 )
 
@@ -192,6 +197,16 @@ func TestTransformCropsStripedTIFF(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := New(op, Limits{})
+	windows, full := stripWindowLoads(t, "window"), stripWindowLoads(t, "full")
+	defer func() {
+		// "square" needs all rows of the 200x100 sample, so it loads the whole file.
+		if got := stripWindowLoads(t, "window") - windows; got != 4 {
+			t.Errorf("window loads = %d, want 4", got)
+		}
+		if got := stripWindowLoads(t, "full") - full; got != 1 {
+			t.Errorf("full loads = %d, want 1", got)
+		}
+	}()
 	for _, region := range []string{"10,0,80,20", "10,40,80,20", "10,80,80,20", "pct:10,70,50,30", "square"} {
 		var buf bytes.Buffer
 		if _, err := p.Transform(context.Background(), mustParseImageRequest(t, "striped.tif/"+region+"/max/0/default.png"), &buf); err != nil {
@@ -228,6 +243,24 @@ func TestTransformCropsStripedTIFF(t *testing.T) {
 			}
 		}
 	}
+}
+
+// stripWindowLoads reads triplet_tiff_strip_window_loads_total{result} from /metrics.
+func stripWindowLoads(t *testing.T, result string) int {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	metrics.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	prefix := `triplet_tiff_strip_window_loads_total{result="` + result + `"} `
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			n, err := strconv.Atoi(strings.TrimPrefix(line, prefix))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return n
+		}
+	}
+	return 0
 }
 
 func assertStripWindowMatches(t *testing.T, name, path string, l *stripLayout, top, rows int) {
